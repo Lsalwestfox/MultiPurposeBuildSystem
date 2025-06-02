@@ -33,6 +33,12 @@ type StdInterface = {
     --- Reads local file in project path
     readLocalFile: (file: string) -> string,
 
+    --- Writes local file in project path
+    writeLocalFile: (file: string, content: string?) -> nil,
+
+    --- Adds content to the end of the file, can be used to create file too
+    appendLocalFile: (file: string, content: string?) -> nil,
+
     --- Returns 1 if found, 0 if not
     isExistsLocalFile: (file: string) -> number,
 
@@ -46,19 +52,106 @@ type StdInterface = {
     createLocalDir: (file: string) -> number,
 
     --- Recursive, like rm -rf, returns 1 if successfully removes and 0 if not
-    deleteLocalDirOrFile: (file: string) -> number
+    deleteLocalDirOrFile: (file: string) -> number,
+
+    --- See CXXInstance
+    createCompilerInstance: () -> CXXInstance,
+
+    --- Tries to create directory if not exists, returns 1 if exists, 0 if not
+    createLocalDirIfNotExists: (dir: string) -> number,
+
+    --- Tries to delete and then create directory, returns 1 if successfully, 0 if not
+    --- If returns 0 then directory can existing but not guaranteed that it will be empty
+    recreateLocalDir: (dir: string) -> number,
+
+    --- Creates ./mpbs-cache and recreates ./mpbs-cache/bin and ./mpbs-cache/obj
+    --- Created for fast creation of correct directories if you gonna stick if standard
+    setupCXXStdEnv: () -> nil,
+
+    --- Downloads file from url, shocking
+    --- Curl must be installed
+    downloadFrom: (url: string, dest: string) -> nil,
+
+    --- Gets file names of all directories
+    readAllEntries: (dir: string) -> {string},
+
+    --- Gets file names of all directories recursively
+    realAllEntriesRecursive: (dir: string) -> {string},
+
+    argNum: () -> number,
+    argAt: (index: number) -> string,
+    argContains: (arg: string) -> number,
+    addArgTelemetry: (name: string, description: string) -> nil,
 }
 
-local std: StdInterface = {
+--- A std creation of C/CPP compilation step
+type CXXInstance = {
+    --- Flags that will be present for both release and debug modes
+    flags: string | nil,
+    --- Flags that will be present only in debug mode
+    debugFlags: string | nil,
+    --- Flags that will be present only in release mode
+    releaseFlags: string | nil,
+    --- The program to compile code
+    compiler: string,
+    --- CXX files used to compile that
+    sources: {string},
+    --- Include directories for .h files
+    includes: {string},
+    --- Libraries directories for .lib / .a files
+    libraries: {string},
+    --- Do not confuse with libraries field, this field used for -l flags, you know if know
+    libraries_: {string},
+
+    --- Output of .o files, including file name
+    obj_output: string,
+    --- Output folder of program
+    bin_output: string,
+
+    --- Calls compile with release flags, see compile
+    compileRelease: (name: string, additionalFlags: string) -> nil,
+    --- Calls compile with debug flags, see compile
+    compileDebug: (name: string, additionalFlags: string) -> nil,
+    --- Compiles a struct with provided additional flags
+    --- Supported compilers: g++, gcc, clang++, clang, zig cc, zig c++
+    --- Flags used: -O0-3, -L, -I, -l, -o, -c
+    compile: (name: string, additionalFlags: string) -> nil,
+
+    --- Helper function, for clang++ use clangCPPCompiler function
+    clangCCompiler: () -> nil,
+    --- Helper function, for clang use clangCCompiler function
+    clangCPPCompiler: () -> nil,
+    --- Helper function, for g++ use gppCompiler function
+    gccCompiler: () -> nil,
+    --- Helper function, for gcc use gccCompiler function
+    gppCompiler: () -> nil,
+    --- Helper function, for zig c++ use zigCPPCompiler function
+    zigCompiler: () -> nil,
+    --- Helper function, for zig cc use zigCompiler function
+    zigCPPCompiler: () -> nil,
+
+    --- Helper function
+    addSourceFile: (source: string) -> nil,
+    --- Helper function
+    addIncludeFolder: (folder: string) -> nil,
+    --- Helper function
+    addLibraryFolder: (folder: string) -> nil,
+    --- Helper function
+    addLibrary: (flag: string) -> nil,
+    --- Helper function, must not end with "/" or "\\"
+    addSourceFilesFromDirectory: (source: string) -> nil,
+}
+
+local std = {
     executablePath = __IMPL_EXECUTABLE_LOCATION__,
     projectPath = __IMPL_PROJECT_DIRECTORY__,
     os = __IMPL_OS__,
     is_unix = ((__IMPL_OS__ == "W") and 1000 or 1001) - 1000,
 
     version = {
-        full = "v1.0.0",
+        full = "v1.1.0",
         major = 1,
-        medium = 0,
+        medium = 1,
         minor = 0
     },
 
@@ -91,6 +184,14 @@ local std: StdInterface = {
         return __impl_read_local_file(file)
     end,
 
+    writeLocalFile = function(file: string, content: string?)
+        if(content == nil) then
+            __impl_write_local_file(file, "")
+        else
+            __impl_write_local_file(file, content)
+        end
+    end,
+
     isExistsLocalFile = function(file: string): number
         return __impl_is_exists_local_file(file);
     end,
@@ -110,7 +211,196 @@ local std: StdInterface = {
     deleteLocalDirOrFile = function(dir: string): number
         return __impl_delete_local_file_or_dir(dir);
     end,
+
+    readAllEntries = function(dir: string): {string}
+        local output: {string} = {}
+        __impl_set_dir_entries(dir, 0)
+        local tmp = __impl_next_dir_entry()
+        while(tmp ~= nil) do
+            table.insert(output, tmp)
+            tmp = __impl_next_dir_entry()
+        end
+        return output;
+    end,
+
+    realAllEntriesRecursive = function(dir: string): {string}
+        local output: {string} = {}
+        __impl_set_dir_entries(dir, 1)
+        local tmp = __impl_next_dir_entry()
+        while(tmp ~= nil) do
+            table.insert(output, tmp)
+            tmp = __impl_next_dir_entry()
+        end
+        return output;
+    end,
+
+    argNum = function(): number
+        return __impl_arg_num()
+    end,
+
+    argAt = function(index: number): string
+        return __impl_arg_at(index)
+    end,
+
+    argContains = function(arg: string): number
+        return __impl_arg_contains(arg)
+    end,
+
+    addArgTelemetry = function(name: string, description: string)
+        __impl_arg_telemetry(name, description)
+    end
 }
 
-std.info("MPBS standard library " .. std.version.full)
+function std.appendLocalFile(file: string, content: string?)
+    if(std.isExistsLocalFile(file) == 0) then
+        std.writeLocalFile(file, content)
+        return
+    end
+
+    if(content ~= nil) then
+        std.writeLocalFile(file, std.readLocalFile(file) .. content)
+    end
+end
+
+function std.createCompilerInstance(): CXXInstance
+    local instance = {
+        flags = "-static",
+        debugFlags = "-O0 -g",
+        releaseFlags = "-O3",
+        compiler = "unknown",
+        sources = {},
+        includes = {},
+        libraries = {},
+        libraries_ = {},
+        obj_output = "./mpbs-cache/obj/obj",
+        bin_output = "./mpbs-cache/bin/",
+    };
+
+    function instance.compileRelease(name: string, additionalFlags: string?)
+        if(additionalFlags == nil) then
+            instance.compile(name, instance.releaseFlags)
+        elseif(instance.releaseFlags == nil) then
+            instance.compile(name, additionalFlags)
+        else
+            instance.compile(name, instance.releaseFlags .. " " .. additionalFlags)
+        end
+    end
+
+    function instance.compileDebug(name: string, additionalFlags: string?)
+        if(additionalFlags == nil) then
+            instance.compile(name, instance.debugFlags)
+        elseif(instance.debugFlags == nil) then
+            instance.compile(name, additionalFlags)
+        else
+            instance.compile(name, instance.debugFlags .. " " .. additionalFlags)
+        end
+    end
+
+    function instance.compile(name: string, additionalFlags: string?)
+        local flags = instance.compiler
+
+        if(instance.flags ~= nil) then
+            flags = flags .. " " .. instance.flags
+        end
+
+        if(additionalFlags ~= nil) then
+            flags = flags .. " " .. additionalFlags
+        end
+
+        for i = 1, #instance.includes do
+            flags = flags .. " -I" .. instance.includes[i]
+        end
+
+        for i = 1, #instance.libraries do
+            flags = flags .. " -L" .. instance.libraries[i]
+        end
+
+        for i = 1, #instance.libraries_ do
+            flags = flags .. " -l" .. instance.libraries_[i]
+        end
+
+        local counter = 0;
+        for i = 1, #instance.sources do
+            std.execute(flags .. " -c " .. instance.sources[i] .. " -o " .. instance.obj_output .. counter .. ".o")
+            counter = counter + 1
+        end
+
+        flags = flags .. " -o " .. instance.bin_output .. name
+        for i = 0, counter - 1 do
+            flags = flags .. " " .. instance.obj_output .. i .. ".o"
+        end
+
+        std.execute(flags)
+    end
+
+    function instance.addSourceFilesFromDirectory(source: string)
+        local dirs = std.realAllEntriesRecursive(source .. "/")
+        for i = 1, #dirs do
+            instance.addSourceFile(source .. "/" .. dirs[i])
+        end
+    end
+
+    function instance.clangCCompiler()   instance.compiler = "clang"   end
+    function instance.clangCPPCompiler() instance.compiler = "clang++" end
+    function instance.gccCompiler()      instance.compiler = "gcc"     end
+    function instance.gppCompiler()      instance.compiler = "g++"     end
+    function instance.zigCompiler()      instance.compiler = "zig cc"  end
+    function instance.zigCPPCompiler()   instance.compiler = "zig c++" end
+
+    function instance.addSourceFile(source: string)     table.insert(instance.sources, source)   end
+    function instance.addIncludeFolder(folder: string)  table.insert(instance.includes, folder)  end
+    function instance.addLibraryFolder (folder: string) table.insert(instance.libraries, folder) end
+    function instance.addLibrary(flag: string)          table.insert(instance.libraries_, flag)  end
+
+    return instance;
+end
+
+function std.createLocalDirIfNotExists(dir: string): number
+    if((std.isExistsLocalDir(dir) == 0) and (std.createLocalDir(dir) == 0)) then
+        return 0
+    else
+        return 1
+    end
+end
+
+function std.recreateLocalDir(dir: string): number
+    if(std.isExistsLocalDir(dir) == 1) then
+        if(std.deleteLocalDirOrFile(dir) == 0) then
+            return 0
+        end
+    end
+
+    if(std.createLocalDir(dir) == 0) then
+        return 0
+    end
+
+    return 1
+end
+
+function std.setupCXXStdEnv()
+    if(std.createLocalDirIfNotExists("./mpbs-cache") == 0) then
+        std.err("Failed to create cache directory")
+        return
+    end
+
+    if(std.recreateLocalDir("./mpbs-cache/bin") == 0) then
+        std.err("Failed to recreate bin directory")
+        return
+    end
+
+    if(std.recreateLocalDir("./mpbs-cache/obj") == 0) then
+        std.err("Failed to recreate objects directory")
+        return
+    end
+end
+
+function std.downloadFrom(url: string, dest: string)
+    std.execute("curl -o " .. dest .. " " .. url)
+end
+
+function __type_implementation_check(_std: StdInterface)
+    _std.info("MPBS standard library " .. _std.version.full)
+end
+
+__type_implementation_check(std);
 return std

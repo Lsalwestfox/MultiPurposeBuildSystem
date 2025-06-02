@@ -168,6 +168,24 @@ pub fn readFile(file_path: []const u8) ![]u8 {
     return buffer;
 }
 
+pub fn writeFileProject(file: []const u8, content: []const u8) !void {
+    const file_path = try resolveAbsolutePathBasedOnProject(file);
+    defer alloc.free(file_path);
+    try writeFile(file_path, content);
+}
+
+pub fn writeFile(file_path: []const u8, content: []const u8) !void {
+    if(!isExistsFile(file_path)) {
+        const file_ = try std.fs.createFileAbsolute(file_path, .{});
+        defer file_.close();
+        try file_.writeAll(content);
+    } else {
+        const file_ = try std.fs.openFileAbsolute(file_path, .{.mode = .write_only});
+        defer file_.close();
+        try file_.writeAll(content);
+    }
+}
+
 pub fn createLocalFile(dir_path: []const u8) bool {
     const p = resolveAbsolutePathBasedOnProject(dir_path);
     if(p) |output| {

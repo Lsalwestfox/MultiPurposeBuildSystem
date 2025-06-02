@@ -193,6 +193,22 @@ fn zluaReadLocalFile(lua: *Lua) i32 {
     return 1;
 }
 
+fn zluaWriteLocalFile(lua: *Lua) i32 {
+    const file = lua.toString(1);
+    const content = lua.toString(2);
+    if(file) |f| if(content) |c| {
+        const r = mpbs.writeFileProject(f, c);
+        if(r) |_| {} else |err| {
+            mpbs.logger.logError("Failed to write to file: {!}", .{err});
+        }
+    } else |err| {
+        mpbs.logger.logError("Failed to receive string value: {!}", .{err});
+    } else |err| {
+        mpbs.logger.logError("Failed to receive string value: {!}", .{err});
+    }
+    return 1;
+}
+
 fn zluaIsExistsLocalFile(lua: *Lua) i32 {
     const file = lua.toString(1);
     if(file) |path| {
@@ -272,6 +288,8 @@ pub fn setup_std(lua: *Lua) void {
     lua.setGlobal("__impl_execute");
     lua.pushFunction(zlua.wrap(zluaReadLocalFile));
     lua.setGlobal("__impl_read_local_file");
+    lua.pushFunction(zlua.wrap(zluaWriteLocalFile));
+    lua.setGlobal("__impl_write_local_file");
     lua.pushFunction(zlua.wrap(zluaIsExistsLocalFile));
     lua.setGlobal("__impl_is_exists_local_file");
     lua.pushFunction(zlua.wrap(zluaIsExistsLocalDir));
@@ -289,6 +307,14 @@ pub fn setup_std(lua: *Lua) void {
     lua.setGlobal("__IMPL_PROJECT_DIRECTORY__");
     _ = lua.pushString(mpbs.os());
     lua.setGlobal("__IMPL_OS__");
+
+    lua.openTable();
+    lua.openMath();
+    lua.openString();
+    lua.openUtf8();
+
+    @import("zlua_dir_iterator.zig").expose(lua);
+    @import("zlua_args.zig").expose(lua);
 }
 
 pub fn receive_error(lua: *Lua) void {

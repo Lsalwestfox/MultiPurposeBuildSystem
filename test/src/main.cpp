@@ -17,7 +17,7 @@ int32_t random_number_seedless() {
 
 int main() {
     using namespace std;
-    for(auto i = 0; i < 100; i++) {
+    for(auto i = 0; i < 10; i++) {
         int32_t a = random_number_seedless() % 19;
         int32_t b = random_number_seedless() % 19;
         if(a < 0) a = -a;

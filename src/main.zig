@@ -2,10 +2,14 @@ const std = @import("std");
 const zlua = @import("zlua");
 const mpbs = @import("mpbs.zig");
 const luaustd = @import("luaustd.zig");
+const zlua_args = @import("zlua_args.zig");
 
 const Lua = zlua.Lua;
 
 pub fn main() void {
+    defer @import("zlua_dir_iterator.zig").dispose();
+    defer zlua_args.dispose();
+
     var args = std.process.argsWithAllocator(mpbs.alloc) catch |err| {
         mpbs.logger.logError("Failed reading arguments: {!}", .{err});
         return;
@@ -74,10 +78,13 @@ pub fn main() void {
 
     defer mpbs.alloc.free(src);
 
-    mpbs.logger.logInfo("{s}-MPBS version v1.0.0", .{mpbs.os()});
+    mpbs.logger.logInfo("{s}-MPBS version v1.1.0", .{mpbs.os()});
     mpbs.logger.logInfo("Build file found", .{});
     mpbs.logger.logInfo("Executable path: {s}", .{mpbs.getExecutableLocation()});
     mpbs.logger.logInfo("Project path: {s}", .{mpbs.getProjectFilesLocation()});
+
+    const task__ = args.next();
+    zlua_args.init(&args);
 
     const bc = zlua.compile(mpbs.alloc, src, zlua.CompileOptions{}) catch |err| {
         mpbs.logger.logError("Failed to compile build file: {!}", .{err});
@@ -96,7 +103,7 @@ pub fn main() void {
         luaustd.receive_error(lua);
     };
 
-    if(args.next()) |task| if(luaustd.tasks.get(task)) |task_info| {
+    if(task__) |task| if(luaustd.tasks.get(task)) |task_info| {
         _ = lua.getGlobal(task_info.task) catch |err| {
             mpbs.logger.logError("Failed getting global variable: {!}", .{err});
             luaustd.receive_error(lua);
@@ -108,14 +115,24 @@ pub fn main() void {
     } else {
         mpbs.logger.logInfo("Task {s} not found!", .{task});
     } else {
+        mpbs.logger.logInfo("", .{});
         mpbs.logger.logInfo("No task provided to run, available tasks provided below", .{});
         var iterator = luaustd.tasks.iterator();
         while(iterator.next()) |entry| {
             const info = entry.value_ptr;
-            const right_pad = info.right_pad();
-            if(right_pad) |rp| {
+            if(info.right_pad()) |rp| {
                 defer mpbs.alloc.free(rp);
                 mpbs.logger.logInfo("\t{s}{s} - {s}", .{info.name, rp, info.description});
+            } else |err| {
+                mpbs.logger.logError("Failed creating right pad: {!}", .{err});
+            }
+        }
+        mpbs.logger.logInfo("", .{});
+        mpbs.logger.logInfo("Arguments for tasks below", .{});
+        for(zlua_args.tel.items) |arg_tel| {
+            if(arg_tel.right_pad()) |rp| {
+                defer mpbs.alloc.free(rp);
+                mpbs.logger.logInfo("\t{s}{s} - {s}", .{arg_tel.name, rp, arg_tel.description});
             } else |err| {
                 mpbs.logger.logError("Failed creating right pad: {!}", .{err});
             }
