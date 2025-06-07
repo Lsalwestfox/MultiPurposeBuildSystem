@@ -65,8 +65,11 @@ type StdInterface = {
     recreateLocalDir: (dir: string) -> number,
 
     --- Creates ./mpbs-cache and recreates ./mpbs-cache/bin and ./mpbs-cache/obj
-    --- Created for fast creation of correct directories if you gonna stick if standard
+    --- Created for fast creation of correct directories if you gonna stick to standard
     setupCXXStdEnv: () -> nil,
+    --- Creates ./mpbs-cache
+    --- Created for fast creation of correct directories if you gonna stick to standard
+    setupCacheDir: () -> nil,
 
     --- Downloads file from url, shocking
     --- Curl must be installed
@@ -94,6 +97,8 @@ type CXXInstance = {
     releaseFlags: string | nil,
     --- The program to compile code
     compiler: string,
+    --- The linker being used to accept all .o files
+    linker: string?,
     --- CXX files used to compile that
     sources: {string},
     --- Include directories for .h files
@@ -107,6 +112,11 @@ type CXXInstance = {
     obj_output: string,
     --- Output folder of program
     bin_output: string,
+
+    --- Creates a command that you can run for getting .o / linking
+    compileFlags: (compiler: string, mn: string?, additionalFlags: string?) -> string,
+    --- Compiles using compiler
+    compileObjectFiles: (additionalFlags: string?) -> nil,
 
     --- Calls compile with release flags, see compile
     compileRelease: (name: string, additionalFlags: string) -> nil,
@@ -130,6 +140,19 @@ type CXXInstance = {
     --- Helper function, for zig cc use zigCompiler function
     zigCPPCompiler: () -> nil,
 
+    --- Helper function, sets linker to be compiler, so executable and not static library
+    defaultLinker: () -> nil,
+    --- Helper function, ar - unix, lib.exe - windows
+    osSpecificLinker: () -> nil,
+    --- Helper function
+    arRcsLinker: () -> nil,
+    --- Helper function
+    libExeLinker: () -> nil,
+    --- Helper function, uses zig build-in ar
+    zigArRcsLinker: () -> nil,
+    --- Helper function, uses zig build-in lib.exe
+    zigLibExeLinker: () -> nil,
+
     --- Helper function
     addSourceFile: (source: string) -> nil,
     --- Helper function
@@ -149,10 +172,10 @@ local std = {
     is_unix = ((__IMPL_OS__ == "W") and 1000 or 1001) - 1000,
 
     version = {
-        full = "v1.1.0",
+        full = "v1.1.1",
         major = 1,
         medium = 1,
-        minor = 0
+        minor = 1
     },
 
     info = function(message: string)
@@ -274,7 +297,48 @@ function std.createCompilerInstance(): CXXInstance
         libraries_ = {},
         obj_output = "./mpbs-cache/obj/obj",
         bin_output = "./mpbs-cache/bin/",
+        linker = nil,
     };
+
+    function instance.compileFlags(compiler: string, mn: string?, additionalFlags: string?): string
+        local flags: string = compiler;
+
+        if(instance.flags ~= nil) then
+            flags = flags .. " " .. instance.flags
+        end
+
+        if(additionalFlags ~= nil) then
+            flags = flags .. " " .. additionalFlags
+        end
+
+        for i = 1, #instance.includes do
+            flags = flags .. " -I" .. instance.includes[i]
+        end
+
+        for i = 1, #instance.libraries do
+            flags = flags .. " -L" .. instance.libraries[i]
+        end
+
+        if(mn ~= nil) then
+            flags = flags .. " " .. mn
+        end
+
+        for i = 1, #instance.libraries_ do
+            flags = flags .. " -l" .. instance.libraries_[i]
+        end
+
+        return flags;
+    end
+
+    function instance.compileObjectFiles(additionalFlags: string?)
+        for i = 1, #instance.sources do
+            std.execute(instance.compileFlags(
+                instance.compiler,
+                "-c " .. instance.sources[i] .. " -o " .. instance.obj_output .. i .. ".o",
+                additionalFlags
+            ))
+        end
+    end
 
     function instance.compileRelease(name: string, additionalFlags: string?)
         if(additionalFlags == nil) then
@@ -297,37 +361,18 @@ function std.createCompilerInstance(): CXXInstance
     end
 
     function instance.compile(name: string, additionalFlags: string?)
-        local flags = instance.compiler
+        instance.compileObjectFiles(additionalFlags);
 
-        if(instance.flags ~= nil) then
-            flags = flags .. " " .. instance.flags
-        end
-
-        if(additionalFlags ~= nil) then
-            flags = flags .. " " .. additionalFlags
-        end
-
-        for i = 1, #instance.includes do
-            flags = flags .. " -I" .. instance.includes[i]
-        end
-
-        for i = 1, #instance.libraries do
-            flags = flags .. " -L" .. instance.libraries[i]
-        end
-
-        for i = 1, #instance.libraries_ do
-            flags = flags .. " -l" .. instance.libraries_[i]
-        end
-
-        local counter = 0;
+        local s = ""
         for i = 1, #instance.sources do
-            std.execute(flags .. " -c " .. instance.sources[i] .. " -o " .. instance.obj_output .. counter .. ".o")
-            counter = counter + 1
+            s = s .. " " .. instance.obj_output .. i .. ".o"
         end
 
-        flags = flags .. " -o " .. instance.bin_output .. name
-        for i = 0, counter - 1 do
-            flags = flags .. " " .. instance.obj_output .. i .. ".o"
+        local flags = ""
+        if(instance.linker ~= nil) then
+            flags = instance.linker .. instance.bin_output .. name .. s
+        else
+            flags = instance.compileFlags(instance.compiler, "-o " .. instance.bin_output .. name .. s, additionalFlags)
         end
 
         std.execute(flags)
@@ -346,6 +391,20 @@ function std.createCompilerInstance(): CXXInstance
     function instance.gppCompiler()      instance.compiler = "g++"     end
     function instance.zigCompiler()      instance.compiler = "zig cc"  end
     function instance.zigCPPCompiler()   instance.compiler = "zig c++" end
+
+    function instance.defaultLinker()    instance.linker = nil               end
+    function instance.arRcsLinker()      instance.linker = "ar rcs "         end
+    function instance.libExeLinker()     instance.linker = "lib /OUT:"       end
+    function instance.zigArRcsLinker()   instance.linker = "zig ar rcs "     end
+    function instance.zigLibExeLinker()  instance.linker = "zig lib /OUT:"   end
+
+    function instance.osSpecificLinker()
+        if(std.is_unix == 1) then
+            instance.arRcsLinker()
+        else
+            instance.libExeLinker()
+        end
+    end
 
     function instance.addSourceFile(source: string)     table.insert(instance.sources, source)   end
     function instance.addIncludeFolder(folder: string)  table.insert(instance.includes, folder)  end
@@ -377,11 +436,15 @@ function std.recreateLocalDir(dir: string): number
     return 1
 end
 
-function std.setupCXXStdEnv()
+function std.setupCacheDir()
     if(std.createLocalDirIfNotExists("./mpbs-cache") == 0) then
         std.err("Failed to create cache directory")
         return
     end
+end
+
+function std.setupCXXStdEnv()
+    std.setupCacheDir()
 
     if(std.recreateLocalDir("./mpbs-cache/bin") == 0) then
         std.err("Failed to recreate bin directory")

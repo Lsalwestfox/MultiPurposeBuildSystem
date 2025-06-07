@@ -1,4 +1,5 @@
 const std = @import("std");
+const buildin = @import("builtin");
 
 // don't be afraid when you see empty switch blocks
 // it's just abusing switch to discard errors
@@ -33,12 +34,6 @@ pub const logger = struct {
 var project_files: ?[]u8 = null;
 var exe_path: ?[]u8 = null;
 
-pub fn generateExecutableLocation() !void {
-    if (exe_path) |_| {} else {
-        exe_path = try std.fs.selfExeDirPathAlloc(alloc);
-    }
-}
-
 pub fn disposeExecutablePath() void {
     if (exe_path) |path| {
         alloc.free(path);
@@ -64,6 +59,30 @@ pub fn getProjectFilesLocation() []u8 {
         return dir;
     } else {
         return getExecutableLocation();
+    }
+}
+
+pub fn getCwdLocation() ![]u8 {
+    const child = std.process.Child.run(.{
+        .allocator = alloc,
+        .cwd_dir = std.fs.cwd(),
+        .argv =
+            if(buildin.target.os.tag == .windows) try splitStringBySpace("cmd.exe /C cd")
+            else try splitStringBySpace("pwd")
+    });
+
+    if(child) |val| {
+        if((val.stderr.len > 0) or (val.stdout.len == 0)) {
+            return (error { Unexpected }).Unexpected;
+        }
+
+        if(buildin.target.os.tag == .windows) {
+            return val.stdout[0..val.stdout.len - 2]; // \r\n
+        } else {
+            return val.stdout[0..val.stdout.len - 1]; // just \n
+        }
+    } else |err| {
+        return err;
     }
 }
 
@@ -97,16 +116,15 @@ pub fn isExistsFile(file: []const u8) bool {
 
 pub fn isExistsDir(file: []const u8) bool {
     const dir = std.fs.openDirAbsolute(file, .{});
-    defer if (dir) |x| {
-        // x.close()
-        // but seems like it's auto close if Dir is const
-        _ = x;
+    defer if(dir) |_| {
+        var x = dir catch unreachable;
+        x.close();
     } else |err| {
         switch (err) {
             else => {},
         }
     };
-    if (dir) |_| {
+    if(dir) |_| {
         return true;
     } else |err| {
         switch (err) {
@@ -137,24 +155,13 @@ pub fn isExistsLocalDir(file: []const u8) bool {
 }
 
 pub fn resolveAbsolutePathBasedOnProject(file: []const u8) ![]u8 {
-    const dir = try std.fs.openDirAbsolute(getProjectFilesLocation(), .{});
-    return dir.realpathAlloc(alloc, file) catch |err| {
-        switch(err) {else => {}}
-        // it joins path even if good but weird looking so it's only in emergencies
-        return try std.fs.path.join(alloc, &[_][]const u8{getProjectFilesLocation(), file});
-    };
+    return try std.fs.path.resolve(alloc, &[_][]const u8{ getProjectFilesLocation(), file });
 }
 
 pub fn readFileProject(file: []const u8) ![]u8 {
     const file_path = try resolveAbsolutePathBasedOnProject(file);
     defer alloc.free(file_path);
-    return readFile(file_path);
-}
-
-pub fn readFileLocally(file: []const u8) ![]u8 {
-    const file_path = try std.fs.path.join(alloc, &[_][]const u8{ getExecutableLocation(), file });
-    defer alloc.free(file_path);
-    return readFile(file_path);
+    return try readFile(file_path);
 }
 
 pub fn readFile(file_path: []const u8) ![]u8 {
@@ -210,19 +217,72 @@ pub fn createLocalDirectory(dir_path: []const u8) bool {
         if(is_err) |_| {
             return isExistsDir(output);
         } else |err| {
-            switch(err) {else => {}}
+            logger.logError("Failed to create directory: {!}", .{err});
             return false;
         }
     } else |err| {
-        switch(err) {else => {}}
+        logger.logError("Error to get absolute path of {s}: {!}", .{dir_path, err});
         return false;
     }
+}
+
+pub fn deleteTreeAbsolute(path: []const u8) !void {
+    if(buildin.target.os.tag == .windows) {
+        const child = std.process.Child.run(.{
+            .allocator = alloc,
+            .cwd = path,
+            .argv = try
+                splitStringBySpace("cmd.exe /C del /Q /S * & for /D %i in (*) do rmdir /S /Q \"%i\"")
+        });
+
+        if(child) |out| {
+            if(out.stderr.len > 0) {
+                logger.logError("Failed to delete {s}: {s}", .{path, out.stderr});
+                // goto B method
+            } else {
+                const child2 = std.process.Child.run(.{
+                    .argv = &[_][]const u8{"cmd.exe", "/C", "rmdir", "/S", "/Q", path},
+                    .allocator = alloc,
+                });
+
+                if(child2) |out2| {
+                    if(out2.stderr.len > 0) {
+                        logger.logError("Failed to delete {s}: {s}", .{path, out.stderr});
+                        // goto B method
+                    } else {
+                        while(isExistsDir(path)) {}
+                        return;
+                    }
+                } else |err| {
+                    return err;
+                }
+            }
+        } else |err| {
+            return err;
+        }
+    }
+
+    // B method
+    const dir = try std.fs.openDirAbsolute(path, .{ .iterate = true });
+    var iter_dir = dir.iterate();
+    while(try iter_dir.next()) |entry| {
+        const p = try std.fs.path.resolve(alloc, &[_][]const u8{path, entry.name});
+        defer alloc.free(p);
+
+        if(entry.kind == .directory) {
+            try deleteTreeAbsolute(p);
+            try std.fs.deleteDirAbsolute(p);
+        } else {
+            try std.fs.deleteFileAbsolute(p);
+        }
+    }
+    try std.fs.deleteDirAbsolute(path);
 }
 
 pub fn deleteLocalTree(path: []const u8) !void {
     const dir_path = try resolveAbsolutePathBasedOnProject(path);
     defer alloc.free(dir_path);
-    try std.fs.deleteTreeAbsolute(dir_path);
+    try deleteTreeAbsolute(dir_path);
 }
 
 pub fn os() [:0]const u8 {
@@ -232,4 +292,24 @@ pub fn os() [:0]const u8 {
         .macos   => return "M",
         else     => return "?",
     }
+}
+
+pub fn splitStringBySpace(input: []const u8) ![]const []const u8 {
+    var iterator = std.mem.splitAny(u8, input, " \n");
+    var len: usize = 0;
+    while(iterator.next()) |_| {
+        len += 1;
+    }
+    iterator.reset();
+    var result = try alloc.alloc([]const u8, len);
+    var i: usize = 0;
+    while(iterator.next()) |val| {
+        var x = try alloc.alloc(u8, val.len);
+        for(0..val.len) |j| {
+            x[j] = val[j];
+        }
+        result[i] = x;
+        i += 1;
+    }
+    return result;
 }

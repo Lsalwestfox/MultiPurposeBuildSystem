@@ -66,11 +66,11 @@ fn zluaNextName(lua: *Lua) i32 {
             }
         } else {
             // this means that thing ended iterating
-            _ = stack.pop();
+            stack.pop().?.dir.close();
             return zluaNextName(lua);
         } else |err| {
             // this means that thing ended iterating
-            _ = stack.pop();
+            stack.pop().?.dir.close();
             mpbs.logger.logWarning("Error getting entry: {!}", .{err});
             lua.pushNil();
         }

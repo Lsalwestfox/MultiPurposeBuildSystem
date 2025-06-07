@@ -22,16 +22,6 @@ if(std.argContains("--show-args") ~= -1) then
     end
 end
 
--- std provides interface for C and C++ code compilation
--- but you can don't use it if you want it's entirely in luau
--- running shell commands (just like CMake normal edition)
--- if only one task uses this instance it's recommended make it local
--- to the task it uses, yes you can have multiple of those
-local instance = std.createCompilerInstance()
-instance.gppCompiler()
-instance.addSourceFilesFromDirectory("./src")
-instance.addIncludeFolder("include")
-
 -- Luau Language Server (JohnnyMorganz's one) VSCode extension
 -- don't say function unused if it begins with "_", but because function
 -- used by MPBS if function begins with "_" it's a task now a standard
@@ -62,20 +52,20 @@ function _setup()
     end
 end
 
-function _build()
-    -- this STD command do the same thing as _setup, line by line
-    -- i create _setup to as example of directory manipulation
+function _test()
     std.setupCXXStdEnv()
 
-    if(std.is_unix == 1) then
-        instance.compileRelease("program")
-    else
-        instance.compileRelease("program.exe")
-    end
-end
-
-function _run()
-    std.setupCXXStdEnv()
+    -- std provides interface for C and C++ code compilation
+    -- but you can don't use it if you want it's entirely in luau
+    -- running shell commands (just like CMake normal edition)
+    -- if only one task uses this instance it's recommended make it local
+    -- to the task it uses, yes you can have multiple of those
+    local instance = std.createCompilerInstance()
+    instance.gppCompiler()
+    instance.addSourceFilesFromDirectory("./src")
+    instance.addIncludeFolder("include")
+    instance.addLibraryFolder("mpbs-cache/lib")
+    instance.addLibrary("memrand_" .. std.os)
 
     if(std.is_unix == 1) then
         instance.compileDebug("program")
@@ -86,9 +76,33 @@ function _run()
     end
 end
 
+-- an example how create a library, here i use zig c++ compiler
+-- and build-in ar/lib.exe because it's just easier to build cross-platform
+function _build()
+    -- this STD command do the same thing as _setup, line by line
+    -- i create _setup to as example of directory manipulation
+    std.setupCXXStdEnv()
+
+    if(std.recreateLocalDir("./mpbs-cache/lib") == 0) then
+        std.info("Failed to recreate cache lib directory")
+        return
+    end
+
+    local instance = std.createCompilerInstance()
+    instance.bin_output = "./mpbs-cache/lib/"
+    instance.addSourceFile("./lib.cpp")
+    instance.addIncludeFolder("include")
+
+    instance.zigCPPCompiler()
+    instance.zigArRcsLinker()
+    instance.compileRelease("libmemrand_L.a", "-target x86_64-linux-musl")
+    instance.zigLibExeLinker()
+    instance.compileRelease("libmemrand_W.a", "-target x86_64-windows-gnu")
+end
+
 -- this function demonstrates how do I/O with files
 function _do_something_in_cache()
-    std.setupCXXStdEnv()
+    std.setupCacheDir()
 
     std.writeLocalFile("./mpbs-cache/empty_file.txt")
     std.writeLocalFile("./mpbs-cache/file.txt", "Deez nuts")
@@ -113,8 +127,8 @@ end
 -- in current case is the function above that starts with "_"
 -- will throw seg fault is you try define task in another place other that that
 std.registerTask("setup_env", "Calls std.setupCXXStdEnv",                        "_setup")
-std.registerTask("build",     "Builds a project in release mode",                "_build")
-std.registerTask("run",       "Runs a project in debug mode",                    "_run")
+std.registerTask("build",     "Builds a library in release mode",                "_build")
+std.registerTask("test",      "Tests a project in debug mode",                   "_test")
 std.registerTask("ligma",     "Writes something and fetches file from internet", "_do_something_in_cache")
 
 function _noop() end

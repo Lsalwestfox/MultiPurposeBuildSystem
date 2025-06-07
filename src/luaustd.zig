@@ -127,30 +127,10 @@ fn zluaResolveAbstract(lua: *Lua) i32 {
     return 1;
 }
 
-fn splitStringBySpace(input: []const u8) ![]const []const u8 {
-    var iterator = std.mem.splitAny(u8, input, " \n");
-    var len: usize = 0;
-    while(iterator.next()) |_| {
-        len += 1;
-    }
-    iterator.reset();
-    var result = try mpbs.alloc.alloc([]const u8, len);
-    var i: usize = 0;
-    while(iterator.next()) |val| {
-        var x = try mpbs.alloc.alloc(u8, val.len);
-        for(0..val.len) |j| {
-            x[j] = val[j];
-        }
-        result[i] = x;
-        i += 1;
-    }
-    return result;
-}
-
 fn zluaExecute(lua: *Lua) i32 {
     const command = lua.toString(1);
     if(command) |cmd| {
-        const argv = splitStringBySpace(cmd);
+        const argv = mpbs.splitStringBySpace(cmd);
 
         if(argv) |value| {
             mpbs.logger.logInfo("{s}", .{cmd});
@@ -260,11 +240,11 @@ fn zluaDeleteLocalFileOrDir(lua: *Lua) i32 {
         if(output) |_| {
             lua.pushInteger(1);
         } else |err| {
-            switch(err) {else => {}}
+            mpbs.logger.logError("Failed to delete {s}: {!}", .{path, err});
             lua.pushInteger(0);
         }
     } else |err| {
-        mpbs.logger.logWarning("Failed to receive string value: {!}", .{err});
+        mpbs.logger.logError("Failed to receive string value: {!}", .{err});
         lua.pushInteger(0);
     }
     return 1;

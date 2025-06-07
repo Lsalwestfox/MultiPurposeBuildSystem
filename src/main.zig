@@ -3,6 +3,7 @@ const zlua = @import("zlua");
 const mpbs = @import("mpbs.zig");
 const luaustd = @import("luaustd.zig");
 const zlua_args = @import("zlua_args.zig");
+const buildin = @import("builtin");
 
 const Lua = zlua.Lua;
 
@@ -21,23 +22,19 @@ pub fn main() void {
 
     // first argument provided no matter what so you can just do that
     const self_location = args.next() orelse unreachable;
+    const pwd: []u8 = mpbs.getCwdLocation() catch |err| {
+        mpbs.logger.logError("Failed to execute command: {!}", .{err});
+        return;
+    };
 
     if(args.next()) |build_dir| {
-        const project_files = std.fs.cwd().realpathAlloc(mpbs.alloc, build_dir);
+        const project_files = std.fs.path.resolve(mpbs.alloc, &[_][]const u8{pwd, build_dir});
 
         if(project_files) |directory| {
             mpbs.setProjectFilesLocation(directory);
         } else |err| {
-            switch(err) {else => {}}
-            mpbs.logger.logWarning("Error getting building directory: {!}", .{err});
-            mpbs.logger.logWarning("Getting using plan B", .{});
-            const joint = std.fs.path.join(mpbs.alloc, &[_][]const u8{"./", build_dir});
-            if(joint) |result| {
-                mpbs.setProjectFilesLocation(result);
-            } else |err2| {
-                mpbs.logger.logError("Error getting building directory: {!}", .{err2});
-                return;
-            }
+            mpbs.logger.logError("Error getting building directory: {!}", .{err});
+            return;
         }
     } else {
         mpbs.logger.logInfo("Syntax: {s} <dir> <task> [args...]", .{self_location});
@@ -48,20 +45,19 @@ pub fn main() void {
     defer mpbs.disposeProjectFilesLocation();
     defer args.deinit();
 
-    mpbs.generateExecutableLocation() catch |err| {
-        mpbs.logger.logWarning("Failed to fetch executable location: {!}", .{err});
-        mpbs.logger.logWarning("Switching to alternate path...", .{});
-
-        const alternatePath = mpbs.resolveAbsolutePathBasedOnProject(self_location);
-        if(alternatePath) |p| {
-            mpbs.setExecutableLocation(p);
-        } else |err2| {
-            mpbs.logger.logError("Failed to fetch executable location: {!}", .{err2});
-            return;
-        }
-    };
+    const __o = std.fs.path.resolve(mpbs.alloc, &[_][]const u8{pwd, self_location});
+    if(__o) |loc| {
+        mpbs.setExecutableLocation(loc);
+    } else |err| {
+        mpbs.logger.logWarning("Error getting project directory: {!}", .{err});
+        return;
+    }
 
     defer mpbs.disposeExecutablePath();
+
+    mpbs.logger.logInfo("{s}-MPBS version v1.1.1", .{mpbs.os()});
+    mpbs.logger.logInfo("Executable path: {s}", .{mpbs.getExecutableLocation()});
+    mpbs.logger.logInfo("Project path: {s}", .{mpbs.getProjectFilesLocation()});
 
     var lua = Lua.init(mpbs.alloc) catch |err| {
         mpbs.logger.logError("Failed to Initialize luau engine: {!}", .{err});
@@ -71,17 +67,14 @@ pub fn main() void {
     defer lua.deinit();
     luaustd.setup_std(lua);
 
-    const src = mpbs.readFileProject("build.luau") catch |err| {
+    const src = mpbs.readFileProject("./build.luau") catch |err| {
         mpbs.logger.logError("Failed reading build file: {!}", .{err});
         return;
     };
 
     defer mpbs.alloc.free(src);
 
-    mpbs.logger.logInfo("{s}-MPBS version v1.1.0", .{mpbs.os()});
     mpbs.logger.logInfo("Build file found", .{});
-    mpbs.logger.logInfo("Executable path: {s}", .{mpbs.getExecutableLocation()});
-    mpbs.logger.logInfo("Project path: {s}", .{mpbs.getProjectFilesLocation()});
 
     const task__ = args.next();
     zlua_args.init(&args);
